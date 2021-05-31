@@ -44,8 +44,11 @@ class Neuron:
     @param x: entrée du neurone
     @type x: numpy array
     '''
+
+    # print('1', x)
+    # print('2', self.weights)
     # TODO
-    self.y = None
+    self.y = numpy.sqrt(numpy.sum(numpy.square(self.weights - x)))
 
   def learn(self,eta,sigma,posxbmu,posybmu,x):
     '''
@@ -61,8 +64,10 @@ class Neuron:
     @param x: entrée du neurone
     @type x: numpy array
     '''
-    # TODO (attention à ne pas changer la partie à gauche du =)
-    self.weights[:] = numpy.random.random(self.weights.shape)
+
+    distance = numpy.sqrt((self.posx - posxbmu) ** 2 + (self.posy - posybmu) ** 2)
+    V = numpy.exp(-((distance ** 2) / (2 * (sigma ** 2))))
+    self.weights[:] += eta * V * (x - self.weights)
 
 
 class SOM:
@@ -264,12 +269,12 @@ if __name__ == '__main__':
   # Ensemble de données 1
   samples = numpy.random.random((nsamples,2,1))*2-1
   # Ensemble de données 2
-#  samples1 = -numpy.random.random((nsamples//3,2,1))
-#  samples2 = numpy.random.random((nsamples//3,2,1))
-#  samples2[:,0,:] -= 1
-#  samples3 = numpy.random.random((nsamples//3,2,1))
-#  samples3[:,1,:] -= 1
-#  samples = numpy.concatenate((samples1,samples2,samples3))
+  # samples1 = -numpy.random.random((nsamples//3,2,1))
+  # samples2 = numpy.random.random((nsamples//3,2,1))
+  # samples2[:,0,:] -= 1
+  # samples3 = numpy.random.random((nsamples//3,2,1))
+  # samples3[:,1,:] -= 1
+  # samples = numpy.concatenate((samples1,samples2,samples3))
   # Ensemble de données 3
 #  samples1 = numpy.random.random((nsamples//2,2,1))
 #  samples1[:,0,:] -= 1
