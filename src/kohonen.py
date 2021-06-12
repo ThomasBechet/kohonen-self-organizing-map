@@ -165,7 +165,7 @@ class SOM:
     if not interactive:
       plt.show()
 
-  def scatter_plot_2(self,interactive=False):
+  def scatter_plot_2(self,interactive=False,trajectory=None,points=None):
     '''
     @summary: Affichage du réseau dans l'espace d'entrée en 2 fois 2d (utilisable dans le cas d'entrée à quatre dimensions et d'une carte avec une topologie de grille carrée)
     @param interactive: Indique si l'affichage se fait en mode interactif
@@ -185,6 +185,11 @@ class SOM:
       plt.plot(w[i,:,0],w[i,:,1],'k',linewidth=1.)
     for i in range(w.shape[1]):
       plt.plot(w[:,i,0],w[:,i,1],'k',linewidth=1.)
+    # Affichage des points d'interpolation de la trajectoire
+    if points:
+      xs = [a[0] for a in points]
+      ys = [a[1] for a in points]
+      plt.plot(xs, ys, 'b')
     # Affichage des 2 dernières dimensions dans le plan
     plt.subplot(1,2,2)
     # Récupération des poids
@@ -198,6 +203,11 @@ class SOM:
       plt.plot(w[:,i,2],w[:,i,3],'k',linewidth=1.)
     # Affichage du titre de la figure
     plt.suptitle('Poids dans l\'espace d\'entree')
+    # Affichage de la trajectoire
+    if trajectory:
+      xs = [a[0] for a in trajectory]
+      ys = [a[1] for a in trajectory]
+      plt.plot(xs, ys, 'r')
     # Affichage de la figure
     if not interactive:
       plt.show()
@@ -245,18 +255,105 @@ class SOM:
     # On renvoie l'erreur de quantification vectorielle moyenne
     return s/nsamples
 
+def area_coverage(a, b, c):
+  AC = (c - a)
+  AB = (b - a)
+  return AC[0] * AB[1] -  AC[1] * AB[0]
+
+def get_motor_from_hand(network, pos):
+  # Recherche du neurone le plus proche
+  pos = numpy.array(pos)
+  nmin = min([item for sublist in network.map for item in sublist], key = lambda n: numpy.linalg.norm(n.weights[2:4] - pos))
+  
+  # Recherche des voisins les plus proches
+  neighbours = []
+  if nmin.posx > 0:
+    neighbours.append(network.map[nmin.posx - 1][nmin.posy])
+  if nmin.posx < network.gridsize[0] - 1:
+    neighbours.append(network.map[nmin.posx + 1][nmin.posy])
+  if nmin.posy > 0:
+    neighbours.append(network.map[nmin.posx][nmin.posy - 1])
+  if nmin.posy < network.gridsize[1] - 1:
+    neighbours.append(network.map[nmin.posx][nmin.posy + 1])
+
+  neighbours = sorted(neighbours, key = lambda n: numpy.linalg.norm(n.weights[2:4] - pos))
+
+  A = nmin.weights[2:4]
+  B = neighbours[0].weights[2:4]
+  C = neighbours[1].weights[2:4]
+
+  # Calcul des poids
+  area = area_coverage(A, B, C)
+  w0 = area_coverage(B, C, pos)
+  w1 = area_coverage(C, A, pos)
+  w2 = area_coverage(A, B, pos)
+  
+  # Normalisation des poids
+  inv_area = 1.0 / area
+  w0 *= inv_area
+  w1 *= inv_area
+  w2 = 1.0 - w0 - w1
+
+  return nmin.weights[0:2] * w0 + neighbours[0].weights[0:2] * w1 + neighbours[1].weights[0:2] * w2
+
+def get_hand_from_motor(network, pos):
+  # Recherche du neurone le plus proche
+  pos = numpy.array(pos)
+  nmin = min([item for sublist in network.map for item in sublist], key = lambda n: numpy.linalg.norm(n.weights[0:2] - pos))
+
+  # Recherche des voisins les plus proches  
+  neighbours = []
+  if nmin.posx > 0:
+    neighbours.append(network.map[nmin.posx - 1][nmin.posy])
+  if nmin.posx < network.gridsize[0] - 1:
+    neighbours.append(network.map[nmin.posx + 1][nmin.posy])
+  if nmin.posy > 0:
+    neighbours.append(network.map[nmin.posx][nmin.posy - 1])
+  if nmin.posy < network.gridsize[1] - 1:
+    neighbours.append(network.map[nmin.posx][nmin.posy + 1])
+
+  neighbours = sorted(neighbours, key = lambda n: numpy.linalg.norm(n.weights[0:2] - pos))
+
+  A = nmin.weights[0:2]
+  B = neighbours[0].weights[0:2]
+  C = neighbours[1].weights[0:2]
+
+  # Calcul des poids
+  area = area_coverage(A, B, C)
+  w0 = area_coverage(B, C, pos)
+  w1 = area_coverage(C, A, pos)
+  w2 = area_coverage(A, B, pos)
+  
+  # Normalisation des poids
+  inv_area = 1.0 / area
+  w0 *= inv_area
+  w1 *= inv_area
+  w2 = 1.0 - w0 - w1
+
+  # Interpolation des données
+  return nmin.weights[2:4] * w0 + neighbours[0].weights[2:4] * w1 + neighbours[1].weights[2:4] * w2
+
+def interpolate_point(a, b, t):
+  return (1.0 - t) * a + t * b
+
+def compute_trajectory(network, start, stop, num):
+  # Génération des positions intermédiaires
+  interpolations = [interpolate_point(start, stop, t) for t in numpy.linspace(0, 1, num)]
+  # Calcul des positions spatiales
+  return [get_hand_from_motor(network, pos) for pos in interpolations]
+
 # -----------------------------------------------------------------------------
 if __name__ == '__main__':
   # Création d'un réseau avec une entrée (2,1) et une carte (10,10)
   #TODO mettre à jour la taille des données d'entrée pour les données robotiques
-  network = SOM((2,1),(10,10))
+  network = SOM((4,1),(10,10))
   # PARAMÈTRES DU RÉSEAU
   # Taux d'apprentissage
   ETA = 0.05
   # Largeur du voisinage
   SIGMA = 1.4
   # Nombre de pas de temps d'apprentissage
-  N = 30000
+  N = 10000
   # Affichage interactif de l'évolution du réseau 
   #TODO à mettre à faux pour que les simulations aillent plus vite
   VERBOSE = True
@@ -267,7 +364,7 @@ if __name__ == '__main__':
   # TODO décommenter les données souhaitées
   nsamples = 1200
   # Ensemble de données 1
-  samples = numpy.random.random((nsamples,2,1))*2-1
+  # samples = numpy.random.random((nsamples,2,1))*2-1
   # Ensemble de données 2
   # samples1 = -numpy.random.random((nsamples//3,2,1))
   # samples2 = numpy.random.random((nsamples//3,2,1))
@@ -276,33 +373,48 @@ if __name__ == '__main__':
   # samples3[:,1,:] -= 1
   # samples = numpy.concatenate((samples1,samples2,samples3))
   # Ensemble de données 3
-#  samples1 = numpy.random.random((nsamples//2,2,1))
-#  samples1[:,0,:] -= 1
-#  samples2 = numpy.random.random((nsamples//2,2,1))
-#  samples2[:,1,:] -= 1
-#  samples = numpy.concatenate((samples1,samples2))
+  # samples1 = numpy.random.random((nsamples//2,2,1))
+  # samples1[:,0,:] -= 1
+  # samples2 = numpy.random.random((nsamples//2,2,1))
+  # samples2[:,1,:] -= 1
+  # samples = numpy.concatenate((samples1,samples2))
+
+  # samples1 = -numpy.random.random((nsamples // 4, 2, 1))
+  # samples1[:, 1, :] *= 2
+  # samples1[:, 1, :] += 1
+  # samples2 = numpy.random.random((nsamples * 2, 2, 1))
+  # samples2[:, 1, :] *= 2
+  # samples2[:, 1, :] -= 1
+  # samples = numpy.concatenate((samples1, samples2))
+
+  # samples1 = -numpy.random.random((nsamples // 2, 2, 1)) * 0.5 - 0.5
+  # samples1[:, 1, :] += 0.6
+  # samples2 = numpy.random.random((nsamples // 2, 2, 1)) * 0.5 + 0.5
+  # samples2[:, 1, :] -= 0.6
+  # samples = numpy.concatenate((samples1, samples2))
+
   # Ensemble de données robotiques
-#  samples = numpy.random.random((nsamples,4,1))
-#  samples[:,0:2,:] *= numpy.pi
-#  l1 = 0.7
-#  l2 = 0.3
-#  samples[:,2,:] = l1*numpy.cos(samples[:,0,:])+l2*numpy.cos(samples[:,0,:]+samples[:,1,:])
-#  samples[:,3,:] = l1*numpy.sin(samples[:,0,:])+l2*numpy.sin(samples[:,0,:]+samples[:,1,:])
+  samples = numpy.random.random((nsamples,4,1))
+  samples[:,0:2,:] *= numpy.pi
+  l1 = 0.7
+  l2 = 0.3
+  samples[:,2,:] = l1*numpy.cos(samples[:,0,:])+l2*numpy.cos(samples[:,0,:]+samples[:,1,:])
+  samples[:,3,:] = l1*numpy.sin(samples[:,0,:])+l2*numpy.sin(samples[:,0,:]+samples[:,1,:])
   # Affichage des données (pour les ensembles 1, 2 et 3)
+  # plt.figure()
+  # plt.scatter(samples[:,0,0], samples[:,1,0])
+  # plt.xlim(-1,1)
+  # plt.ylim(-1,1)
+  # plt.suptitle('Donnees apprentissage')
+  # plt.show()
+  # Affichage des données (pour l'ensemble robotique)
   plt.figure()
-  plt.scatter(samples[:,0,0], samples[:,1,0])
-  plt.xlim(-1,1)
-  plt.ylim(-1,1)
+  plt.subplot(1,2,1)
+  plt.scatter(samples[:,0,0].flatten(),samples[:,1,0].flatten(),c='k')
+  plt.subplot(1,2,2)
+  plt.scatter(samples[:,2,0].flatten(),samples[:,3,0].flatten(),c='k')
   plt.suptitle('Donnees apprentissage')
   plt.show()
-  # Affichage des données (pour l'ensemble robotique)
-#  plt.figure()
-#  plt.subplot(1,2,1)
-#  plt.scatter(samples[:,0,0].flatten(),samples[:,1,0].flatten(),c='k')
-#  plt.subplot(1,2,2)
-#  plt.scatter(samples[:,2,0].flatten(),samples[:,3,0].flatten(),c='k')
-#  plt.suptitle('Donnees apprentissage')
-#  plt.show()
     
   # SIMULATION
   # Affichage des poids du réseau
@@ -330,7 +442,7 @@ if __name__ == '__main__':
       plt.clf()
       # Remplissage de la figure
       # TODO à remplacer par scatter_plot_2 pour les données robotiques
-      network.scatter_plot(True)
+      network.scatter_plot_2(True)
       # Affichage du contenu de la figure
       plt.pause(0.00001)
       plt.draw()
@@ -338,8 +450,37 @@ if __name__ == '__main__':
   if VERBOSE:
     # Désactivation du mode interactif
     plt.ioff()
+
+  # Calculer la trajectoire de la main du bras
+  start = numpy.array([0.3, 0.3])
+  stop = numpy.array([2.5, 2.5])
+  num = 10
+
+  # Génération des positions intermédiaires
+  interpolations = [interpolate_point(start, stop, t) for t in numpy.linspace(0, 1, num)]
+  # Calcul des positions de la trajectoire
+  trajectory = [get_hand_from_motor(network, pos) for pos in interpolations]
+  # Affichage des résutats sur le graphe
+  network.scatter_plot_2(True, trajectory, interpolations)
+  plt.draw()
+
+  # Print variance
+  print('variance:', numpy.var(network.activitymap.flatten()))
   # Affichage des poids du réseau
   network.plot()
   # Affichage de l'erreur de quantification vectorielle moyenne après apprentissage
   print("erreur de quantification vectorielle moyenne ",network.MSE(samples))
 
+  # Calculer la position moteur depuis la position spatiale
+  print('test hand -> motor')
+  motor = get_motor_from_hand(network, (0.0, 0.6))
+  hand = get_hand_from_motor(network, motor)
+  print(motor)
+  print(hand)
+
+  # Calculer la position spatiale depuis la position moteur
+  print('test motor -> hand')
+  hand = get_hand_from_motor(network, (1.5, 1.5))
+  motor = get_motor_from_hand(network, hand)
+  print(hand)
+  print(motor)
